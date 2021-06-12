@@ -77,8 +77,8 @@ parser.add_argument(
     help='Weight decay (L2 penalty).')
 # WRN Architecture options
 parser.add_argument(
-    '--layers', default=40, type=int, help='total number of layers')
-parser.add_argument('--widen-factor', default=2, type=int, help='Widen factor')
+    '--layers', default=16, type=int, help='total number of layers')
+parser.add_argument('--widen-factor', default=4, type=int, help='Widen factor')
 parser.add_argument(
     '--droprate', default=0.0, type=float, help='Dropout probability')
 # AugMix options
@@ -268,8 +268,8 @@ def test_c(net, test_data, base_path):
   corruption_accs = []
   for corruption in CORRUPTIONS:
     # Reference to original data is mutated
-    test_data.data = np.load(base_path + corruption + '.npy')
-    test_data.targets = torch.LongTensor(np.load(base_path + 'labels.npy'))
+    test_data.data = np.load(base_path + corruption + '.npy')[40000:]
+    test_data.targets = torch.LongTensor(np.load(base_path + 'labels.npy')[40000:])
 
     test_loader = torch.utils.data.DataLoader(
         test_data,
@@ -298,6 +298,7 @@ def main():
       [transforms.ToTensor(),
        transforms.Normalize([0.5] * 3, [0.5] * 3)])
   test_transform = preprocess
+  print(args)
 
   if args.dataset == 'cifar10':
     train_data = datasets.CIFAR10(
