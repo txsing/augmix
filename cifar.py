@@ -39,6 +39,7 @@ import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 from torchvision import datasets
 from torchvision import transforms
+from utils import utils
 
 parser = argparse.ArgumentParser(
     description='Trains a CIFAR Classifier',
@@ -132,6 +133,18 @@ parser.add_argument(
     type=int,
     default=4,
     help='Number of pre-fetching threads.')
+parser.add_argument(
+    '--activate_threshold',
+    '-t',
+    type=float,
+    default=0.1,
+    help='Number of pre-fetching threads.')
+parser.add_argument(
+    '--cov_weight',
+    '-w',
+    type=float,
+    default=0.1,
+    help='Number of pre-fetching threads.')
 
 args = parser.parse_args()
 
@@ -202,22 +215,29 @@ class AugMixDataset(torch.utils.data.Dataset):
     return len(self.dataset)
 
 
-def train(net, train_loader, optimizer, scheduler):
+def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
   """Train for one epoch."""
   net.train()
   loss_ema = 0.
+  neuron_coverage = 0.
   for i, (images, targets) in enumerate(train_loader):
     optimizer.zero_grad()
 
     if args.no_jsd:
       images = images.cuda()
       targets = targets.cuda()
-      logits = net(images)
-      loss = F.cross_entropy(logits, targets)
+      logits, layer_output_dict = net(images)
+
+      layer_neuron_activated_dict, total_act_nron, total_nron = utils.update_coverage_v2(layer_output_dict, args.activate_threshold, layer_neuron_activated_dict)
+      neurons_2b_covered, all_not_covered  = utils.neuron_to_cover(
+          layer_neuron_activated_dict, 1.0
+      )
+      neuron_coverage = utils.cal_neurons_cov_loss(layer_output_dict, neurons_2b_covered)
+      loss = F.cross_entropy(logits, targets) - args.cov_weight * neuron_coverage
     else:
       images_all = torch.cat(images, 0).cuda()
       targets = targets.cuda()
-      logits_all = net(images_all)
+      logits_all, _ = net(images_all)
       logits_clean, logits_aug1, logits_aug2 = torch.split(
           logits_all, images[0].size(0))
 
@@ -240,9 +260,9 @@ def train(net, train_loader, optimizer, scheduler):
     scheduler.step()
     loss_ema = loss_ema * 0.9 + float(loss) * 0.1
     if i % args.print_freq == 0:
-      print('Train Loss {:.3f}'.format(loss_ema))
+      print('Train Loss {:.3f}, Coverage {:.3f}'.format(loss_ema, neuron_coverage))
 
-  return loss_ema
+  return loss_ema, layer_neuron_activated_dict
 
 
 def test(net, test_loader):
@@ -253,7 +273,7 @@ def test(net, test_loader):
   with torch.no_grad():
     for images, targets in test_loader:
       images, targets = images.cuda(), targets.cuda()
-      logits = net(images)
+      logits, _ = net(images)
       loss = F.cross_entropy(logits, targets)
       pred = logits.data.max(1)[1]
       total_loss += float(loss.data)
@@ -391,11 +411,12 @@ def main():
     f.write('epoch,time(s),train_loss,test_loss,test_error(%)\n')
 
   best_acc = 0
+  layer_neuron_activated_dict = {}
   print('Beginning training from epoch:', start_epoch + 1)
   for epoch in range(start_epoch, args.epochs):
     begin_time = time.time()
 
-    train_loss_ema = train(net, train_loader, optimizer, scheduler)
+    train_loss_ema, layer_neuron_activated_dict = train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict)
     test_loss, test_acc = test(net, test_loader)
 
     is_best = test_acc > best_acc

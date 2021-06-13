@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from collections import OrderedDict
 
 
 class BasicBlock(nn.Module):
@@ -116,11 +117,16 @@ class WideResNet(nn.Module):
         m.bias.data.zero_()
 
   def forward(self, x):
+    layers_output_dict = OrderedDict()
     out = self.conv1(x)
+    layers_output_dict['conv1']=out
     out = self.block1(out)
+    layers_output_dict['block1']=out
     out = self.block2(out)
+    layers_output_dict['block2']=out
     out = self.block3(out)
+    layers_output_dict['block3']=out
     out = self.relu(self.bn1(out))
     out = F.avg_pool2d(out, 8)
     out = out.view(-1, self.n_channels)
-    return self.fc(out)
+    return self.fc(out), layers_output_dict
