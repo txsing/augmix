@@ -146,6 +146,14 @@ parser.add_argument(
     default=0.1,
     help='Number of pre-fetching threads.')
 
+activation_layers = ['conv1','block1','block2','block3','block4','avg_pool']
+parser.add_argument(
+    '--collected_layers',
+    '-cl',
+    choices=activation_layers,
+    help='layers',
+    default=None,
+    nargs='+')
 args = parser.parse_args()
 
 CORRUPTIONS = [
@@ -219,6 +227,7 @@ def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
   """Train for one epoch."""
   net.train()
   loss_ema = 0.
+  neuron_cov_str = ''
   neuron_coverage = 0.
   for i, (images, targets) in enumerate(train_loader):
     optimizer.zero_grad()
@@ -229,6 +238,7 @@ def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
       logits, layer_output_dict = net(images)
 
       layer_neuron_activated_dict, total_act_nron, total_nron = utils.update_coverage_v2(layer_output_dict, args.activate_threshold, layer_neuron_activated_dict)
+      neuron_cov_str = str(int(total_act_nron)) + '/' + str(int(total_nron))
       neurons_2b_covered, all_not_covered  = utils.neuron_to_cover(
           layer_neuron_activated_dict, 1.0
       )
@@ -260,7 +270,7 @@ def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
     scheduler.step()
     loss_ema = loss_ema * 0.9 + float(loss) * 0.1
     if i % args.print_freq == 0:
-      print('Train Loss {:.3f}, Coverage {:.3f}'.format(loss_ema, neuron_coverage))
+      print('Train Loss {:.3f}, Coverage {:.3f}, {}'.format(loss_ema, neuron_coverage, neuron_cov_str))
 
   return loss_ema, layer_neuron_activated_dict
 
@@ -354,7 +364,7 @@ def main():
   if args.model == 'densenet':
     net = densenet(num_classes=num_classes)
   elif args.model == 'wrn':
-    net = WideResNet(args.layers, num_classes, args.widen_factor, args.droprate)
+    net = WideResNet(args.layers, num_classes, args.widen_factor, args.droprate, args.collected_layers)
   elif args.model == 'allconv':
     net = AllConvNet(num_classes)
   elif args.model == 'resnext':
@@ -451,7 +461,7 @@ def main():
                 test_loss, 100 - 100. * test_acc))
 
   test_c_acc = test_c(net, test_data, base_c_path)
-  print('Mean Corruption Error: {:.3f}'.format(100 - 100. * test_c_acc))
+  print('Mean Corruption Error: {:.3f}, Acc: {:.3f}'.format(100 - 100. * test_c_acc, 100. * test_c_acc))
 
   with open(log_path, 'a') as f:
     f.write('%03d,%05d,%0.6f,%0.5f,%0.2f\n' %

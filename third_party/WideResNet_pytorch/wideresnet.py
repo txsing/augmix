@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
+all_activation_layers = ['conv1','block1','block2','block3','avg_pool']
 
 
 class BasicBlock(nn.Module):
@@ -82,7 +83,7 @@ class NetworkBlock(nn.Module):
 class WideResNet(nn.Module):
   """WideResNet class."""
 
-  def __init__(self, depth, num_classes, widen_factor=1, drop_rate=0.0):
+  def __init__(self, depth, num_classes, widen_factor=1, drop_rate=0.0, collected_layers=None):
     super(WideResNet, self).__init__()
     n_channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
     assert (depth - 4) % 6 == 0
@@ -105,6 +106,7 @@ class WideResNet(nn.Module):
     self.relu = nn.ReLU(inplace=True)
     self.fc = nn.Linear(n_channels[3], num_classes)
     self.n_channels = n_channels[3]
+    self.collected_layers = collected_layers
 
     for m in self.modules():
       if isinstance(m, nn.Conv2d):
@@ -128,5 +130,10 @@ class WideResNet(nn.Module):
     layers_output_dict['block3']=out
     out = self.relu(self.bn1(out))
     out = F.avg_pool2d(out, 8)
+    layers_output_dict['avg_pool']=out
+    if self.collected_layers:
+      for key in all_activation_layers:
+        if key not in self.collected_layers:
+          del layers_output_dict[key]
     out = out.view(-1, self.n_channels)
     return self.fc(out), layers_output_dict
