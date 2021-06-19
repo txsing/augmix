@@ -421,9 +421,9 @@ def main():
     f.write('epoch,time(s),train_loss,test_loss,test_error(%)\n')
 
   best_acc = 0
-  layer_neuron_activated_dict = {}
   print('Beginning training from epoch:', start_epoch + 1)
   for epoch in range(start_epoch, args.epochs):
+    layer_neuron_activated_dict = {}
     begin_time = time.time()
 
     train_loss_ema, layer_neuron_activated_dict = train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict)
