@@ -23,6 +23,7 @@ Example usage:
 from __future__ import print_function
 
 import argparse
+import random
 import os
 import shutil
 import time
@@ -289,6 +290,9 @@ def test_c(net, test_data, base_path):
 def main():
   torch.manual_seed(1)
   np.random.seed(1)
+  random.seed(1)
+  torch.backends.cudnn.deterministic = True
+  torch.backends.cudnn.benchmark = False
 
   # Load datasets
   train_transform = transforms.Compose(
