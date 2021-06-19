@@ -26,6 +26,7 @@ import argparse
 import os
 import shutil
 import time
+import random
 
 import augmentations
 from models.cifar.allconv import AllConvNet
@@ -133,6 +134,11 @@ parser.add_argument(
     type=int,
     default=4,
     help='Number of pre-fetching threads.')
+parser.add_argument(
+    '--seed',
+    type=int,
+    default=1,
+    help='Seed')
 parser.add_argument(
     '--activate_threshold',
     '-t',
@@ -317,8 +323,11 @@ def test_c(net, test_data, base_path):
 
 
 def main():
-  torch.manual_seed(1)
-  np.random.seed(1)
+  torch.manual_seed(args.seed)
+  np.random.seed(args.seed)
+  random.seed(args.seed)
+  torch.backends.cudnn.deterministic = True
+  torch.backends.cudnn.benchmark = False
 
   # Load datasets
   train_transform = transforms.Compose(
