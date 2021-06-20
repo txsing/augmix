@@ -140,6 +140,12 @@ parser.add_argument(
     default=1,
     help='Seed')
 parser.add_argument(
+    '--gpu',
+    '-g',
+    type=int,
+    default=0,
+    help='gpu')
+parser.add_argument(
     '--activate_threshold',
     '-t',
     type=float,
@@ -323,6 +329,8 @@ def test_c(net, test_data, base_path):
 
 
 def main():
+  torch.cuda.set_device(args.gpu)
+
   torch.manual_seed(args.seed)
   np.random.seed(args.seed)
   random.seed(args.seed)
@@ -387,7 +395,7 @@ def main():
       nesterov=True)
 
   # Distribute model across all visible GPUs
-  net = torch.nn.DataParallel(net).cuda()
+  net = net.cuda()
   cudnn.benchmark = True
 
   start_epoch = 0
