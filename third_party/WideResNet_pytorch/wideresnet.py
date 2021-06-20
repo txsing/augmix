@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
-all_activation_layers = ['conv1','block1','block2','block3','avg_pool']
+all_activation_layers = ['conv1','block1','block2','block3','bn','avg_pool']
 
 
 class BasicBlock(nn.Module):
@@ -129,6 +129,7 @@ class WideResNet(nn.Module):
     out = self.block3(out)
     layers_output_dict['block3']=out
     out = self.relu(self.bn1(out))
+    layers_output_dict['bn']=out
     out = F.avg_pool2d(out, 8)
     layers_output_dict['avg_pool']=out
     if self.collected_layers:

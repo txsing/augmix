@@ -158,7 +158,7 @@ parser.add_argument(
     default=0.1,
     help='Number of pre-fetching threads.')
 
-activation_layers = ['conv1','block1','block2','block3','block4','avg_pool']
+activation_layers = ['conv1','block1','block2','block3','bn','avg_pool']
 parser.add_argument(
     '--collected_layers',
     '-cl',
