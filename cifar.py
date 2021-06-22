@@ -157,6 +157,11 @@ parser.add_argument(
     type=float,
     default=0.1,
     help='Number of pre-fetching threads.')
+parser.add_argument(
+    '--beta',
+    type=float,
+    default=0.01,
+    help='similarity beta')
 
 activation_layers = ['conv1','block1','block2','block3','bn','avg_pool']
 parser.add_argument(
@@ -167,6 +172,7 @@ parser.add_argument(
     default=None,
     nargs='+')
 args = parser.parse_args()
+args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CORRUPTIONS = [
     'gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur',
@@ -221,11 +227,17 @@ class AugMixDataset(torch.utils.data.Dataset):
     self.dataset = dataset
     self.preprocess = preprocess
     self.no_jsd = no_jsd
+    self.tf = transforms.Compose(
+        [transforms.RandomHorizontalFlip(),
+         transforms.RandomCrop(32, padding=4)]
+    )
 
   def __getitem__(self, i):
     x, y = self.dataset[i]
+    tf_x = self.tf(x)
+
     if self.no_jsd:
-      return aug(x, self.preprocess), y
+      return self.preprocess(x), aug(tf_x, self.preprocess), y
     else:
       im_tuple = (self.preprocess(x), aug(x, self.preprocess),
                   aug(x, self.preprocess))
@@ -235,18 +247,18 @@ class AugMixDataset(torch.utils.data.Dataset):
     return len(self.dataset)
 
 
-def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
+def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict, layer_neuron_activated_dict_raw):
   """Train for one epoch."""
   net.train()
   loss_ema = 0.
   neuron_cov_str = ''
   neuron_coverage = 0.
-  for i, (images, targets) in enumerate(train_loader):
+  for i, (images_raw, images, targets) in enumerate(train_loader):
     optimizer.zero_grad()
 
     if args.no_jsd:
-      images = images.cuda()
-      targets = targets.cuda()
+      images = images.to(args.device)
+      targets = targets.to(args.device)
       logits, layer_output_dict = net(images)
 
       layer_neuron_activated_dict, total_act_nron, total_nron = utils.update_coverage_v2(layer_output_dict, args.activate_threshold, layer_neuron_activated_dict)
@@ -256,9 +268,31 @@ def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
       )
       neuron_coverage = utils.cal_neurons_cov_loss(layer_output_dict, neurons_2b_covered)
       loss = F.cross_entropy(logits, targets) - args.cov_weight * neuron_coverage
+      loss_final = loss
+      if args.beta > 0:
+        images_raw = images_raw.to(args.device)
+        logits_raw, layer_output_dict_raw = net(images_raw)
+        layer_neuron_activated_dict_raw, total_act_nron_raw, total_nron_raw = utils.update_coverage_v2(layer_output_dict_raw, args.activate_threshold, layer_neuron_activated_dict_raw)
+        neuron_cov_str_raw = str(int(total_act_nron_raw)) + '/' + str(int(total_nron_raw))
+        neurons_2b_covered_raw, all_not_covered_raw  = utils.neuron_to_cover(
+            layer_neuron_activated_dict_raw, 1.0
+        )
+        neuron_coverage_raw = utils.cal_neurons_cov_loss(layer_output_dict_raw, neurons_2b_covered_raw)
+        loss_raw = F.cross_entropy(logits_raw, targets) - args.cov_weight * neuron_coverage_raw
+
+        model_params = list(net.parameters())
+        sim_term = torch.tensor(0.0).float().to(args.device)
+
+        grad_raw = torch.autograd.grad(loss_raw, model_params, create_graph=True)
+        grad = torch.autograd.grad(loss, model_params, create_graph=True)
+        for j in range(len(grad_raw)):
+          g_tr = 0 if grad_raw[j] is None else grad_raw[j]
+          g_mt = 0 if grad[j] is None else grad[j]
+          sim_term = sim_term + torch.norm(g_tr - g_mt)
+        loss_final = loss + loss_raw + args.beta * sim_term
     else:
-      images_all = torch.cat(images, 0).cuda()
-      targets = targets.cuda()
+      images_all = torch.cat(images, 0).to(args.device)
+      targets = targets.to(args.device)
       logits_all, _ = net(images_all)
       logits_clean, logits_aug1, logits_aug2 = torch.split(
           logits_all, images[0].size(0))
@@ -277,14 +311,14 @@ def train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict):
                     F.kl_div(p_mixture, p_aug1, reduction='batchmean') +
                     F.kl_div(p_mixture, p_aug2, reduction='batchmean')) / 3.
 
-    loss.backward()
+    loss_final.backward()
     optimizer.step()
     scheduler.step()
-    loss_ema = loss_ema * 0.9 + float(loss) * 0.1
+    loss_ema = loss_ema * 0.9 + float(loss_final) * 0.1
     if i % args.print_freq == 0:
-      print('Train Loss {:.3f}, Coverage {:.3f}, {}'.format(loss_ema, neuron_coverage, neuron_cov_str))
+      print('Train Loss {:.3f}, Coverage {:.3f}/{:.3f}, {}/{}, SimL {:.3f}'.format(loss_ema, neuron_coverage_raw, neuron_coverage, neuron_cov_str, neuron_cov_str_raw, sim_term))
 
-  return loss_ema, layer_neuron_activated_dict
+  return loss_ema, layer_neuron_activated_dict, layer_neuron_activated_dict_raw
 
 
 def test(net, test_loader):
@@ -294,7 +328,7 @@ def test(net, test_loader):
   total_correct = 0
   with torch.no_grad():
     for images, targets in test_loader:
-      images, targets = images.cuda(), targets.cuda()
+      images, targets = images.to(args.device), targets.to(args.device)
       logits, _ = net(images)
       loss = F.cross_entropy(logits, targets)
       pred = logits.data.max(1)[1]
@@ -329,7 +363,8 @@ def test_c(net, test_data, base_path):
 
 
 def main():
-  torch.cuda.set_device(args.gpu)
+  if torch.cuda.is_available():
+      torch.cuda.set_device(args.gpu)
 
   torch.manual_seed(args.seed)
   np.random.seed(args.seed)
@@ -349,7 +384,8 @@ def main():
 
   if args.dataset == 'cifar10':
     train_data = datasets.CIFAR10(
-        './data/cifar', train=True, transform=train_transform, download=True)
+        './data/cifar', train=True, transform=None, download=True)
+
     test_data = datasets.CIFAR10(
         './data/cifar', train=False, transform=test_transform, download=True)
     base_c_path = './data/cifar/CIFAR-10-C/'
@@ -363,6 +399,7 @@ def main():
     num_classes = 100
 
   train_data = AugMixDataset(train_data, preprocess, args.no_jsd)
+  
   train_loader = torch.utils.data.DataLoader(
       train_data,
       batch_size=args.batch_size,
@@ -395,7 +432,7 @@ def main():
       nesterov=True)
 
   # Distribute model across all visible GPUs
-  net = net.cuda()
+  net = net.to(args.device)
   cudnn.benchmark = True
 
   start_epoch = 0
@@ -441,9 +478,10 @@ def main():
   print('Beginning training from epoch:', start_epoch + 1)
   for epoch in range(start_epoch, args.epochs):
     layer_neuron_activated_dict = {}
+    layer_neuron_activated_dict_raw = {}
     begin_time = time.time()
 
-    train_loss_ema, layer_neuron_activated_dict = train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict)
+    train_loss_ema, layer_neuron_activated_dict, layer_neuron_activated_dict_raw = train(net, train_loader, optimizer, scheduler, layer_neuron_activated_dict, layer_neuron_activated_dict_raw)
     test_loss, test_acc = test(net, test_loader)
 
     is_best = test_acc > best_acc
