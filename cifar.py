@@ -137,11 +137,10 @@ parser.add_argument(
 args = parser.parse_args()
 
 CORRUPTIONS = [
-    'gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur',
-    'glass_blur', 'motion_blur', 'zoom_blur', 'snow', 'frost', 'fog',
-    'brightness', 'contrast', 'elastic_transform', 'pixelate',
-    'jpeg_compression'
-]
+    'fog','snow', 'frost', 
+    'zoom_blur', 'defocus_blur','glass_blur', 'gaussian_blur', 'motion_blur', 
+    'speckle_noise', 'shot_noise', 'impulse_noise', 'gaussian_noise',
+    'jpeg_compression', 'pixelate', 'spatter', 'elastic_transform', 'brightness', 'saturate', 'contrast']
 
 
 def get_lr(step, total_steps, lr_max, lr_min):
